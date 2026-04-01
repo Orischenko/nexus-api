@@ -7,7 +7,6 @@ export class AppController {
 
   @Get('health')
   getHealth(): { status: string } {
-    console.log('--->', 'test2');
     return this.appService.getHealth();
   }
 }
