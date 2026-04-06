@@ -12,7 +12,11 @@ usage() {
   echo "  service:     api"
   echo "  action:      push"
   echo ""
-  echo "Example: ./deploy/deploy.sh prod api push"
+  echo "Required env vars:"
+  echo "  IMAGE_TAG    Docker image tag to push (for example: github sha)"
+  echo ""
+  echo "Example:"
+  echo "  IMAGE_TAG=abc123 ./deploy/deploy.sh prod api push"
   exit 1
 }
 
@@ -41,27 +45,10 @@ case "$ENV:$SERVICE" in
   *)        echo "Error: no ECS service configured for $ENV:$SERVICE"; exit 1 ;;
 esac
 
+IMAGE_TAG="${IMAGE_TAG:-}"
+[[ -z "$IMAGE_TAG" ]] && { echo "Error: IMAGE_TAG is required"; usage; }
+
 ECR_IMAGE="${ECR_REGISTRY}/${ECR_REPO}"
-
-get_next_version() {
-  local latest
-  latest=$(aws ecr describe-images \
-    --repository-name "$ECR_REPO" \
-    --region "$AWS_REGION" \
-    --query 'imageDetails[*].imageTags' \
-    --output text 2>/dev/null \
-    | tr '\t' '\n' \
-    | grep -E '^v[0-9]+$' \
-    | sed 's/v//' \
-    | sort -n \
-    | tail -1)
-
-  if [[ -z "$latest" ]]; then
-    echo "v1"
-  else
-    echo "v$((latest + 1))"
-  fi
-}
 
 ecr_login() {
   echo "🔐 Logging in to ECR..."
@@ -70,22 +57,20 @@ ecr_login() {
 }
 
 build_and_push() {
-  DEPLOY_VERSION=$(get_next_version)
-
   echo ""
-  echo "🏗️  Building and pushing ${ECR_REPO}:${DEPLOY_VERSION}..."
+  echo "🏗️  Building and pushing ${ECR_REPO}:${IMAGE_TAG}..."
   echo ""
 
   docker buildx build \
     --platform linux/amd64 \
     -f "$DOCKERFILE" \
+    -t "${ECR_IMAGE}:${IMAGE_TAG}" \
     -t "${ECR_IMAGE}:latest" \
-    -t "${ECR_IMAGE}:${DEPLOY_VERSION}" \
     . \
     --push
 
   echo ""
-  echo "✅ Pushed ${ECR_IMAGE}:${DEPLOY_VERSION}"
+  echo "✅ Pushed ${ECR_IMAGE}:${IMAGE_TAG}"
   echo "✅ Pushed ${ECR_IMAGE}:latest"
 }
 
@@ -108,7 +93,7 @@ case "$ACTION" in
     build_and_push
     force_deploy
     echo ""
-    echo "🎉 Done! ${ECR_REPO}:${DEPLOY_VERSION} deployed to ${ENV}"
+    echo "🎉 Done! ${ECR_REPO}:${IMAGE_TAG} deployed to ${ENV}"
     ;;
   *)
     echo "Error: unknown action '$ACTION'"; usage ;;

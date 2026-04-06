@@ -27,4 +27,6 @@ jobs:
           aws-region: us-east-1
 
       - name: Run deploy script
+        env:
+          IMAGE_TAG: ${{ github.sha }}
         run: bash ./deploy/deploy.sh prod api push
