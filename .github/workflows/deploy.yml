@@ -9,6 +9,14 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: nexus-api
+  ECS_CLUSTER: nexus-cluster
+  ECS_SERVICE: nexus-api-service-3y2zj6cx
+  ECS_TASK_DEFINITION: deploy/task-definition.json
+  CONTAINER_NAME: nexus-api
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -24,9 +32,42 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::105299590490:role/gha-nexus-api-deploy
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Run deploy script
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: build-image
         env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
-        run: bash ./deploy/deploy.sh prod api push
+        run: |
+          IMAGE_URI=$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
+
+          docker buildx build \
+            --platform linux/amd64 \
+            -f deploy/api/Dockerfile \
+            -t "$IMAGE_URI" \
+            -t "$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest" \
+            . \
+            --push
+
+          echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      - name: Render ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
