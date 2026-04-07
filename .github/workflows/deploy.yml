@@ -12,8 +12,8 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: nexus-api
-  ECS_CLUSTER: nexus-cluster
-  ECS_SERVICE: nexus-api-service-3y2zj6cx
+  ECS_CLUSTER: nexus-api-cluster
+  ECS_SERVICE: nexus-api-service
   ECS_TASK_DEFINITION: deploy/task-definition.json
   CONTAINER_NAME: nexus-api
 
