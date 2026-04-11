@@ -5,6 +5,13 @@ on:
     branches:
       - main
 
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Existing ECR image tag to deploy (for rollback)'
+        required: true
+        type: string
+
 permissions:
   id-token: write
   contents: read
@@ -19,6 +26,7 @@ env:
 
 jobs:
   deploy:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
@@ -28,6 +36,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      # GitHub получает временные AWS credentials через OIDC role
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -38,6 +47,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # Каждый deploy собирает immutable image tag = github.sha
       - name: Build and push image
         id: build-image
         env:
@@ -64,7 +74,51 @@ jobs:
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
+      # Регистрируем новую task definition revision и деплоим её в ECS
       - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+  rollback:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # GitHub получает временные AWS credentials через OIDC role
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::105299590490:role/gha-nexus-api-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Для rollback берём уже существующий image tag из ECR
+      - name: Prepare rollback image
+        id: rollback-image
+        run: |
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ inputs.image_tag }}
+          echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      - name: Render ECS task definition for rollback
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.rollback-image.outputs.image }}
+
+      # Деплоим старую версию образа обратно в ECS
+      - name: Rollback in ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
